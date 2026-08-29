@@ -22,18 +22,25 @@ import type { Question, ExerciseType } from '@/utils/questionBuilder';
 let soundEnabledRef = true;
 
 /**
- * CỜ CHẨN ĐOÁN TẠM THỜI (2026-08-29): đặt true để tắt hẳn track-player
- * trong "Nghe từ vựng", chỉ giữ BackgroundTimer wake-lock — dùng để kiểm
- * tra xem TrackPlayer có phải nguyên nhân khiến giọng đọc tiếng Đức bị
- * im lặng hoàn toàn trong "Nghe từ vựng" hay không. Nếu bật cờ này mà
- * tiếng Đức phát được bình thường trong "Nghe từ vựng" → xác nhận đúng
- * nguyên nhân, sẽ tìm cách giữ cả 2 (track-player + giọng đọc) sau. Nếu
- * bật cờ này mà tiếng Đức VẪN im lặng → không phải do track-player, cần
- * tìm hướng khác. Nhớ đặt lại false (hoặc xoá cờ này) sau khi xác định
- * xong nguyên nhân — true nghĩa là mất tính năng giữ app thức khi khoá
- * màn hình lúc đang "Nghe từ vựng".
+ * LỊCH SỬ (2026-08-29): cờ này từng phải bật = true để xác nhận TrackPlayer
+ * (chiếm audio session độc quyền cho foreground service) là nguyên nhân
+ * khiến AVSpeechSynthesizer bị im lặng hoàn toàn trong "Nghe từ vựng".
+ * Đã xác nhận đúng.
+ *
+ * Giờ đổi về false để BẬT LẠI TrackPlayer (khôi phục nghe nền), vì
+ * setupTrackPlayerOnce() ở trên đã được sửa để dựng session ở chế độ
+ * `mixWithOthers` thay vì độc quyền — về lý thuyết sẽ hết đụng độ với
+ * expo-speech. CHƯA THỬ TRÊN THIẾT BỊ THẬT.
+ *
+ * Sau khi build & cài lại: mở "Nghe từ vựng" và nghe thử tiếng Đức.
+ *  - Nếu phát bình thường → xong, giữ false, xoá cờ này luôn cũng được.
+ *  - Nếu lại im lặng hoàn toàn → đổi lại true để dùng tạm (mất nghe nền
+ *    nhưng có tiếng), rồi báo lại để thử `iosCategoryOptions:
+ *    ['interruptSpokenAudioAndMixWithOthers']` ở setupTrackPlayerOnce()
+ *    thay cho `mixWithOthers` — tuỳ chọn đó dành riêng cho việc nhường
+ *    chỗ cho audio dạng giọng nói, mạnh tay hơn mixWithOthers thường.
  */
-const DEBUG_DISABLE_TRACKPLAYER_KEEPALIVE = true;
+const DEBUG_DISABLE_TRACKPLAYER_KEEPALIVE = false;
 
 /**
  * "Trình phát nền" cho Nghe từ vựng, dựng trên react-native-track-player.
@@ -77,7 +84,33 @@ let wakeLockActive = false;
 async function setupTrackPlayerOnce(): Promise<void> {
   if (playerSetupPromise) return playerSetupPromise;
   playerSetupPromise = (async () => {
-    await TrackPlayer.setupPlayer({});
+    // FIX NGUYÊN NHÂN IM LẶNG (2026-08-29): mặc định TrackPlayer dựng audio
+    // session iOS ở category "playback" KHÔNG có tuỳ chọn mix — tức là
+    // độc quyền session đó. AVSpeechSynthesizer (expo-speech) dùng CHUNG
+    // một AVAudioSession toàn app (không phải session riêng cho từng
+    // module), nên khi track câm của TrackPlayer đang giữ session ở chế
+    // độ độc quyền, lần kích hoạt session tiếp theo của AVSpeechSynthesizer
+    // bị chặn ngay từ tầng hệ điều hành → phát ra không một tiếng động,
+    // dù lệnh speak() vẫn "chạy" bình thường phía JS (không throw lỗi).
+    //
+    // iosCategoryOptions: ['mixWithOthers'] báo cho iOS biết session của
+    // TrackPlayer SẴN SÀNG nhường/chia sẻ chỗ cho nguồn âm thanh khác kích
+    // hoạt cùng lúc (kể cả nguồn khác NGAY TRONG CÙNG APP như
+    // AVSpeechSynthesizer) — thay vì giữ độc quyền suốt lúc track câm
+    // đang lặp. Đây là fix theo báo cáo phổ biến của cộng đồng RNTP khi
+    // TTS bị im lặng lúc dùng chung với TrackPlayer.
+    //
+    // CHƯA KIỂM CHỨNG TRÊN THIẾT BỊ THẬT — cần bạn build lại và thử ngay
+    // "Nghe từ vựng" xem tiếng Đức có phát được không. Nếu VẪN im lặng,
+    // báo lại để thử tiếp iosCategoryOptions: ['interruptSpokenAudioAndMixWithOthers']
+    // (mạnh tay hơn: chủ động nhường hẳn cho audio dạng "giọng nói" thay
+    // vì chỉ hạ âm lượng) — xem comment tại DEBUG_DISABLE_TRACKPLAYER_KEEPALIVE
+    // phía trên nếu cần bật lại cờ debug để so sánh.
+    await TrackPlayer.setupPlayer({
+      iosCategory: 'playback' as any,
+      iosCategoryMode: 'default' as any,
+      iosCategoryOptions: ['mixWithOthers'] as any,
+    });
     await TrackPlayer.updateOptions({
       android: {
         appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification,
@@ -192,12 +225,26 @@ export function setTtsSoundEnabled(enabled: boolean) {
  * kích hoạt lại từ đầu.
  */
 export async function warmUpAudioSession() {
-  if (DEBUG_DISABLE_TRACKPLAYER_KEEPALIVE) return; // tạm tắt để chẩn đoán
-  try {
-    await setupTrackPlayerOnce();
-  } catch {
-    // Không nghiêm trọng — nếu lỗi, TTS vẫn hoạt động, chỉ có thể chậm hơn
-    // ở lần gọi đầu tiên.
+  // ĐÃ XÁC NHẬN (2026-08-29): bật DEBUG_DISABLE_TRACKPLAYER_KEEPALIVE (tắt
+  // TrackPlayer) thì tiếng Đức phát được bình thường trong "Nghe từ vựng"
+  // → TrackPlayer đúng là nguyên nhân gây im lặng hoàn toàn, nên phần dựng
+  // TrackPlayer bên dưới VẪN giữ nguyên tắt (che theo cờ) cho đến khi tìm
+  // ra cách cho 2 audio session (TrackPlayer + AVSpeechSynthesizer) cùng
+  // tồn tại mà không đụng nhau.
+  //
+  // NHƯNG bước "làm nóng" giọng đọc bên dưới (Speech.speak ký tự câm)
+  // KHÔNG liên quan gì đến TrackPlayer — nó chỉ tự kích hoạt audio session
+  // riêng của expo-speech. Trước đây bị return sớm CHUNG với điều kiện
+  // trên nên vô tình bị tắt luôn, khiến mỗi lần bấm phát âm đều phải tốn
+  // 0.5–2s kích hoạt session từ đầu. Tách riêng ra để luôn chạy, không phụ
+  // thuộc cờ debug ở trên.
+  if (!DEBUG_DISABLE_TRACKPLAYER_KEEPALIVE) {
+    try {
+      await setupTrackPlayerOnce();
+    } catch {
+      // Không nghiêm trọng — nếu lỗi, TTS vẫn hoạt động, chỉ có thể chậm hơn
+      // ở lần gọi đầu tiên.
+    }
   }
   // "Làm nóng" giọng đọc tiếng Đức: một số giọng tiếng Đức (đặc biệt bản
   // "Enhanced"/"Premium" người dùng tự tải trong Cài đặt máy) cần nạp mô
