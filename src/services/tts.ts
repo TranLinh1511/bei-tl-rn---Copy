@@ -22,23 +22,25 @@ import type { Question, ExerciseType } from '@/utils/questionBuilder';
 let soundEnabledRef = true;
 
 /**
- * LỊCH SỬ (2026-08-29): cờ này từng phải bật = true để xác nhận TrackPlayer
- * (chiếm audio session độc quyền cho foreground service) là nguyên nhân
- * khiến AVSpeechSynthesizer bị im lặng hoàn toàn trong "Nghe từ vựng".
- * Đã xác nhận đúng.
+ * LỊCH SỬ (2026-08-29):
+ *  1. true  → xác nhận TrackPlayer (session độc quyền) là nguyên nhân
+ *     khiến AVSpeechSynthesizer bị im lặng hoàn toàn.
+ *  2. false + iosCategoryOptions: ['mixWithOthers'] → hết im lặng, NGHE
+ *     NỀN HOẠT ĐỘNG (đã xác nhận trên máy thật), nhưng mỗi từ lại chậm
+ *     0.5–2s để "load" (track câm giữ session, speak() phải giành lại
+ *     quyền kiểm soát mỗi lần).
+ *  3. false + iosCategoryOptions: ['interruptSpokenAudioAndMixWithOthers'],
+ *     iosCategoryMode: 'spokenAudio' (bản hiện tại, xem setupTrackPlayerOnce
+ *     phía trên) → tuỳ chọn dành riêng cho audio nền liên tục + giọng nói
+ *     chen ngang lặp lại, kỳ vọng hết cả im lặng lẫn chậm. CHƯA THỬ TRÊN
+ *     THIẾT BỊ THẬT.
  *
- * Giờ đổi về false để BẬT LẠI TrackPlayer (khôi phục nghe nền), vì
- * setupTrackPlayerOnce() ở trên đã được sửa để dựng session ở chế độ
- * `mixWithOthers` thay vì độc quyền — về lý thuyết sẽ hết đụng độ với
- * expo-speech. CHƯA THỬ TRÊN THIẾT BỊ THẬT.
- *
- * Sau khi build & cài lại: mở "Nghe từ vựng" và nghe thử tiếng Đức.
- *  - Nếu phát bình thường → xong, giữ false, xoá cờ này luôn cũng được.
- *  - Nếu lại im lặng hoàn toàn → đổi lại true để dùng tạm (mất nghe nền
- *    nhưng có tiếng), rồi báo lại để thử `iosCategoryOptions:
- *    ['interruptSpokenAudioAndMixWithOthers']` ở setupTrackPlayerOnce()
- *    thay cho `mixWithOthers` — tuỳ chọn đó dành riêng cho việc nhường
- *    chỗ cho audio dạng giọng nói, mạnh tay hơn mixWithOthers thường.
+ * Sau khi build & cài lại: mở "Nghe từ vựng", kiểm tra cả 2:
+ *  - Tiếng Đức có phát được không (không im lặng)?
+ *  - Có còn độ trễ trước mỗi từ không (so với lúc dùng mixWithOthers)?
+ * Nếu vẫn chậm → báo lại kèm mô tả cụ thể độ trễ có giảm chút nào không,
+ * để phân biệt "vẫn đúng hướng nhưng chưa đủ" với "hướng này sai hẳn,
+ * cần bỏ TrackPlayer liên tục lặp track câm, đổi cách giữ nền khác".
  */
 const DEBUG_DISABLE_TRACKPLAYER_KEEPALIVE = false;
 
@@ -106,10 +108,27 @@ async function setupTrackPlayerOnce(): Promise<void> {
     // (mạnh tay hơn: chủ động nhường hẳn cho audio dạng "giọng nói" thay
     // vì chỉ hạ âm lượng) — xem comment tại DEBUG_DISABLE_TRACKPLAYER_KEEPALIVE
     // phía trên nếu cần bật lại cờ debug để so sánh.
+    // CẬP NHẬT (2026-08-29, sau khi thử trên thiết bị thật): nghe nền ĐÃ
+    // hoạt động với 'mixWithOthers', NHƯNG mỗi từ lại chậm 0.5–2s để "load"
+    // — vì 'mixWithOthers' chỉ cho phép 2 nguồn audio cùng tồn tại, không
+    // báo cho hệ thống biết bản chất của AVSpeechSynthesizer là GIỌNG NÓI
+    // cần "chen" mượt vào track câm đang lặp liên tục của TrackPlayer. Kết
+    // quả: mỗi lần speak() vẫn phải giành lại quyền kiểm soát session từ
+    // track câm đang giữ session (mixWithOthers chỉ cho *cùng tồn tại*,
+    // không tối ưu việc *chen ngang liên tục*) → lặp lại đúng kiểu trễ
+    // 0.5–2s ở MỌI từ, chỉ khác trước là không còn bị im lặng hẳn.
+    //
+    // 'interruptSpokenAudioAndMixWithOthers' là tuỳ chọn Apple thiết kế
+    // riêng cho đúng tình huống này: audio nền liên tục (ở đây là track
+    // câm) + audio dạng GIỌNG NÓI cần chen vào lặp đi lặp lại (dùng trong
+    // các app chỉ đường: nhạc nền + giọng đọc hướng dẫn xen kẽ) — hệ
+    // thống xử lý việc chen/nhường này trơn tru hơn hẳn so với
+    // mixWithOthers thông thường, nên kỳ vọng không còn phải "giành lại"
+    // session mỗi lần nói.
     await TrackPlayer.setupPlayer({
       iosCategory: 'playback' as any,
-      iosCategoryMode: 'default' as any,
-      iosCategoryOptions: ['mixWithOthers'] as any,
+      iosCategoryMode: 'spokenAudio' as any,
+      iosCategoryOptions: ['interruptSpokenAudioAndMixWithOthers'] as any,
     });
     await TrackPlayer.updateOptions({
       android: {
