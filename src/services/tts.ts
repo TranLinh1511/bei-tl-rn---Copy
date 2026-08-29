@@ -159,6 +159,28 @@ export function setTtsSoundEnabled(enabled: boolean) {
   soundEnabledRef = enabled;
 }
 
+/**
+ * "Làm nóng" audio session ngay khi app mở, KHÔNG phát tiếng gì và KHÔNG
+ * hiện thông báo media — chỉ gọi setupPlayer() một lần để iOS thiết lập
+ * sẵn category "playback" cho audio session từ sớm.
+ *
+ * LÝ DO: expo-speech (AVSpeechSynthesizer) tự kích hoạt/tắt audio session
+ * riêng cho MỖI lần gọi speak() nếu chưa có session nào đang "sống" — việc
+ * bật/tắt session này tốn khoảng 0.5–2s, gây cảm giác "bấm phát âm phải
+ * chờ một lúc mới nghe được", lặp lại ở MỌI lần bấm chứ không chỉ lần
+ * đầu. Gọi setupPlayer() sớm (không cần play gì) giúp session đã ở trạng
+ * thái sẵn sàng, nên các lệnh speak() sau đó không phải tốn thời gian
+ * kích hoạt lại từ đầu.
+ */
+export async function warmUpAudioSession() {
+  try {
+    await setupTrackPlayerOnce();
+  } catch {
+    // Không nghiêm trọng — nếu lỗi, TTS vẫn hoạt động, chỉ có thể chậm hơn
+    // ở lần gọi đầu tiên.
+  }
+}
+
 /** index.html: speakText(text) — always German */
 export function speakText(text: string) {
   if (!soundEnabledRef || !text?.trim()) return;

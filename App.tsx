@@ -1,5 +1,5 @@
 import 'react-native-gesture-handler';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Text, TextInput } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
@@ -16,6 +16,7 @@ import { ListenModeProvider } from '@/store/ListenModeContext';
 import ListenModeModal from '@/components/ListenModeModal';
 import FloatingListenPlayer from '@/components/FloatingListenPlayer';
 import RootNavigator from '@/navigation/RootNavigator';
+import { warmUpAudioSession } from '@/services/tts';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -60,6 +61,13 @@ export default function App() {
   const onLayoutRootView = useCallback(async () => {
     if (fontsLoaded || fontError) await SplashScreen.hideAsync();
   }, [fontsLoaded, fontError]);
+
+  // Làm nóng audio session ngay khi app mở, để lần bấm phát âm đầu tiên
+  // (và mọi lần sau) không phải chờ iOS kích hoạt session từ đầu — xem
+  // chú thích chi tiết trong warmUpAudioSession() (services/tts.ts).
+  useEffect(() => {
+    warmUpAudioSession();
+  }, []);
 
   if (!fontsLoaded && !fontError) return null;
 
