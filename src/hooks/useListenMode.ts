@@ -132,10 +132,10 @@ export const SLEEP_TIMER_PRESETS = [0, 5, 10, 15, 30, 60, 90]; // phút, 0 = t�
 // còn đang phát — hai giọng chồng lên nhau. Nâng trần lên 45s để watchdog
 // hiếm khi nổ sớm hơn thật; combo với guard chống gọi advance 2 lần +
 // stopSpeaking() trước khi đọc mảnh kế (bên dưới) mới thực sự triệt tận gốc.
-const WATCHDOG_MIN_MS = 4000;
+const WATCHDOG_MIN_MS = 6500;
 const WATCHDOG_MAX_MS = 45000;
 const WATCHDOG_MS_PER_CHAR = 70;
-const WATCHDOG_BUFFER_MS = 2500;
+const WATCHDOG_BUFFER_MS = 4500;
 
 function estimateWatchdogMs(text: string, rate: number): number {
   const perChar = WATCHDOG_MS_PER_CHAR / Math.max(0.5, rate);

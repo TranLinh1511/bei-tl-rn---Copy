@@ -22,6 +22,20 @@ import type { Question, ExerciseType } from '@/utils/questionBuilder';
 let soundEnabledRef = true;
 
 /**
+ * CỜ CHẨN ĐOÁN TẠM THỜI (2026-08-29): đặt true để tắt hẳn track-player
+ * trong "Nghe từ vựng", chỉ giữ BackgroundTimer wake-lock — dùng để kiểm
+ * tra xem TrackPlayer có phải nguyên nhân khiến giọng đọc tiếng Đức bị
+ * im lặng hoàn toàn trong "Nghe từ vựng" hay không. Nếu bật cờ này mà
+ * tiếng Đức phát được bình thường trong "Nghe từ vựng" → xác nhận đúng
+ * nguyên nhân, sẽ tìm cách giữ cả 2 (track-player + giọng đọc) sau. Nếu
+ * bật cờ này mà tiếng Đức VẪN im lặng → không phải do track-player, cần
+ * tìm hướng khác. Nhớ đặt lại false (hoặc xoá cờ này) sau khi xác định
+ * xong nguyên nhân — true nghĩa là mất tính năng giữ app thức khi khoá
+ * màn hình lúc đang "Nghe từ vựng".
+ */
+const DEBUG_DISABLE_TRACKPLAYER_KEEPALIVE = true;
+
+/**
  * "Trình phát nền" cho Nghe từ vựng, dựng trên react-native-track-player.
  *
  * TẠI SAO ĐỔI SANG TRACK-PLAYER (thay cho mồi câm qua expo-av trước đó):
@@ -111,6 +125,10 @@ export async function startKeepAliveAudio(sessionTitle?: string) {
   } catch {
     wakeLockActive = false;
   }
+  if (DEBUG_DISABLE_TRACKPLAYER_KEEPALIVE) {
+    keepAliveActive = true;
+    return;
+  }
   try {
     await setupTrackPlayerOnce();
     const queue = await TrackPlayer.getQueue();
@@ -147,6 +165,7 @@ export async function stopKeepAliveAudio() {
   }
   if (!keepAliveActive) return;
   keepAliveActive = false;
+  if (DEBUG_DISABLE_TRACKPLAYER_KEEPALIVE) return;
   try {
     await TrackPlayer.reset();
   } catch {
@@ -173,11 +192,25 @@ export function setTtsSoundEnabled(enabled: boolean) {
  * kích hoạt lại từ đầu.
  */
 export async function warmUpAudioSession() {
+  if (DEBUG_DISABLE_TRACKPLAYER_KEEPALIVE) return; // tạm tắt để chẩn đoán
   try {
     await setupTrackPlayerOnce();
   } catch {
     // Không nghiêm trọng — nếu lỗi, TTS vẫn hoạt động, chỉ có thể chậm hơn
     // ở lần gọi đầu tiên.
+  }
+  // "Làm nóng" giọng đọc tiếng Đức: một số giọng tiếng Đức (đặc biệt bản
+  // "Enhanced"/"Premium" người dùng tự tải trong Cài đặt máy) cần nạp mô
+  // hình giọng nói khá nặng vào bộ nhớ TRƯỚC KHI phát được câu đầu tiên —
+  // có thể mất vài giây. Nếu lần nạp đó rơi đúng vào lúc "Nghe từ vựng"
+  // đang chạy, bộ đếm giờ an toàn (watchdog) trong useListenMode có thể
+  // huỷ câu đọc trước khi nó kịp phát ra âm thanh nào. Đọc thử một ký tự
+  // gần như câm (volume cực thấp) ngay khi app mở giúp ép việc nạp giọng
+  // xảy ra sớm, một lần, ngoài lúc người dùng đang thực sự cần nghe.
+  try {
+    Speech.speak('.', { language: 'de-DE', rate: 1, volume: 0.01 });
+  } catch {
+    // ignore — chỉ là tối ưu, không phải điều kiện bắt buộc
   }
 }
 
