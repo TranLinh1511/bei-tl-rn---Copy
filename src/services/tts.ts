@@ -64,7 +64,19 @@ let wakeLockActive = false;
 async function setupTrackPlayerOnce(): Promise<void> {
   if (playerSetupPromise) return playerSetupPromise;
   playerSetupPromise = (async () => {
-    await TrackPlayer.setupPlayer({});
+    // iosCategoryOptions: 'interruptSpokenAudioAndMixWithOthers' — tuỳ chọn
+    // Apple dành riêng cho audio nền liên tục (ở đây là track câm) + giọng
+    // nói cần chen vào lặp lại (ở đây là AVSpeechSynthesizer đọc từng từ) —
+    // để hệ thống xử lý việc 2 bên cùng dùng chung AVAudioSession trơn tru
+    // hơn, giảm nguy cơ tranh chấp/kéo dài thời gian kích hoạt khi cả 2 cùng
+    // cần session gần như cùng lúc (xem thêm comment ở play() trong
+    // useListenMode.ts — lý do chính vẫn là ĐỢI bước này xong hẳn rồi mới
+    // phát từ đầu tiên, cấu hình dưới đây chỉ là lớp phòng thủ thêm).
+    await TrackPlayer.setupPlayer({
+      iosCategory: 'playback' as any,
+      iosCategoryMode: 'spokenAudio' as any,
+      iosCategoryOptions: ['interruptSpokenAudioAndMixWithOthers'] as any,
+    });
     await TrackPlayer.updateOptions({
       android: {
         appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification,

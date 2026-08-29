@@ -545,7 +545,7 @@ export function useListenMode(words: VocabWord[], sessionTitle?: string) {
     [clearWatchdog]
   );
 
-  const play = useCallback(() => {
+  const play = useCallback(async () => {
     if (!orderRef.current.length) return;
     // Đọc lại "Kiểm tra chặt" mỗi lần bấm phát — người dùng có thể đã đổi
     // cài đặt này ở màn hình luyện tập trong lúc "Nghe từ vựng" đang tạm
@@ -555,11 +555,29 @@ export function useListenMode(words: VocabWord[], sessionTitle?: string) {
       if (svc != null) strictVocabCheckRef.current = svc !== 'false';
     });
     const token = ++tokenRef.current;
-    setIsPlaying(true);
-    // Phát mồi câm lặp nền song song — giữ cho hệ điều hành coi app đang có
-    // một phiên media thật đang chạy, để timer JS không bị Doze/treo khi
-    // người dùng tắt màn hình (xem chú thích ở startKeepAliveAudio()).
-    startKeepAliveAudio(sessionTitleRef.current);
+    setIsPlaying(true); // đổi trạng thái nút play/pause NGAY, không đợi bước dưới
+    // ĐỢI trình phát nền dựng xong rồi mới bắt đầu đọc từ đầu tiên (2026-08-29):
+    // trước đây gọi startKeepAliveAudio() KHÔNG đợi (chạy song song với
+    // playFrom() bên dưới) — trên iOS, việc TrackPlayer kích hoạt
+    // AVAudioSession của NÓ và AVSpeechSynthesizer kích hoạt AVAudioSession
+    // của TỪ ĐẦU TIÊN xảy ra CÙNG LÚC, cả 2 cùng giành 1 audio session dùng
+    // chung của cả app → hệ thống phải tự xếp hàng/giải quyết tranh chấp,
+    // khiến tổng thời gian chờ trước khi nghe được tiếng còn LÂU HƠN cả 2
+    // việc cộng lại (quan sát thực tế: ~4s, trong khi 1 mình AVAudioSession
+    // kích hoạt lần đầu chỉ tốn 0.5–2s). Android không có audio session kiểu
+    // này nên không bao giờ gặp tranh chấp đó — khớp với việc chỉ bản iOS bị
+    // chậm.
+    //
+    // Đợi startKeepAliveAudio() xong HẲN (đã vào trạng thái phát track câm)
+    // rồi mới gọi playFrom() cho từ đầu tiên: lúc đó AVAudioSession đã được
+    // TrackPlayer kích hoạt & ổn định sẵn, AVSpeechSynthesizer khi cần chỉ
+    // "mượn ké" session đã sẵn sàng thay vì phải tự giành kích hoạt — kỳ
+    // vọng nhanh hơn hẳn, dù build đợi n set-up TrackPlayer lần đầu vẫn còn
+    // 1 khoản chờ (chỉ 1 lần cho cả phiên chạy app, nhờ playerSetupPromise
+    // ở tts.ts được tái sử dụng — mở "Nghe từ vựng" các lần sau trong cùng
+    // phiên chạy app sẽ không còn phải đợi bước này nữa).
+    await startKeepAliveAudio(sessionTitleRef.current);
+    if (token !== tokenRef.current) return; // đã bấm pause/đổi phiên trong lúc đợi ở trên
     // Từ khi danh sách từ hết KHÔNG còn tự dừng nữa (lặp lại vô hạn — xem
     // playFrom), hẹn giờ đóng là cách DUY NHẤT để buổi nghe tự kết thúc.
     // Hẹn giờ CHỈ được đếm khi đang thực sự phát, nên mỗi lần bấm phát ở
