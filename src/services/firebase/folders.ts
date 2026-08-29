@@ -1,6 +1,6 @@
 import { getDocs, setDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
 import { folderCol, folderDoc } from './paths';
-import { cacheGet } from '@/services/cache';
+import { cacheGet, cacheSet } from '@/services/cache';
 import { dbGetAllSessions, dbSaveSession } from './sessions';
 import type { Folder } from '@/types/models';
 
@@ -11,6 +11,8 @@ function invalidateFoldersCache() {
   _foldersCache = null;
 }
 
+const FOLDERS_CACHE_KEY = 'sessionFolders';
+
 /** index.html: getFolders() */
 export async function getFolders(uid: string): Promise<Folder[]> {
   if (_foldersCache) return _foldersCache;
@@ -18,11 +20,26 @@ export async function getFolders(uid: string): Promise<Folder[]> {
     const snap = await getDocs(query(folderCol(uid), orderBy('order')));
     const folders = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Folder);
     _foldersCache = folders;
+    // SỬA LỖ HỔNG: trước đây chỉ ĐỌC 'sessionFolders' lúc lỗi mạng nhưng
+    // chưa bao giờ GHI nó lúc tải thành công — nên fallback đó thực ra vô
+    // dụng (luôn rỗng). Giờ ghi cache mỗi lần tải thật thành công, để lần
+    // mở app sau có cái mà hiện tạm (peekCachedFolders bên dưới) và fallback
+    // lúc lỗi mạng cũng có dữ liệu thật để dùng.
+    await cacheSet(FOLDERS_CACHE_KEY, folders);
     return folders;
   } catch {
     // fallback to local cache for offline (mirrors localStorage "sessionFolders")
-    return (await cacheGet<Folder[]>('sessionFolders')) || [];
+    return (await cacheGet<Folder[]>(FOLDERS_CACHE_KEY)) || [];
   }
+}
+
+/**
+ * Đọc NHANH danh sách thư mục đã cache, KHÔNG đụng mạng — dùng để hiện tạm
+ * lúc mở app trong lúc chờ tải bản thật (xem DataStore.tsx bootstrap).
+ */
+export async function peekCachedFolders(uid: string): Promise<Folder[] | null> {
+  if (_foldersCache) return _foldersCache;
+  return cacheGet<Folder[]>(FOLDERS_CACHE_KEY);
 }
 
 /** index.html: createFolder(name, parentId=null) */

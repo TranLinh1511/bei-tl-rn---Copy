@@ -19,6 +19,13 @@ export function setFlaggedCacheEntry(sid: string, ids: Set<string>) {
   _flaggedCache[sid] = ids;
 }
 
+/** Đọc NHANH danh sách "đã thuộc" đã cache, KHÔNG đụng mạng — xem peekCachedVocab ở words.ts để biết lý do/cách dùng. */
+export async function peekCachedMastered(sid: string): Promise<Set<string> | null> {
+  if (_masteredCache[sid]) return _masteredCache[sid];
+  const cached = await cacheGet<string[]>('cache_mastered_' + sid);
+  return cached ? new Set(cached) : null;
+}
+
 /** index.html: dbGetMastered(sid) */
 export async function dbGetMastered(uid: string, sid: string): Promise<Set<string>> {
   if (_masteredCache[sid]) return _masteredCache[sid];
@@ -46,6 +53,13 @@ export async function dbMarkMastered(uid: string, sid: string, wid: string): Pro
 export async function dbUnmarkMastered(uid: string, sid: string, wid: string): Promise<void> {
   await deleteDoc(mastDoc(uid, sid, wid));
   _masteredCache[sid]?.delete(wid);
+}
+
+/** Đọc NHANH danh sách "đã gắn cờ" đã cache, KHÔNG đụng mạng — xem peekCachedVocab ở words.ts để biết lý do/cách dùng. */
+export async function peekCachedFlagged(sid: string): Promise<Set<string> | null> {
+  if (_flaggedCache[sid]) return _flaggedCache[sid];
+  const cached = await cacheGet<string[]>('cache_flagged_' + sid);
+  return cached ? new Set(cached) : null;
 }
 
 /** index.html: dbGetFlagged(sid) */
