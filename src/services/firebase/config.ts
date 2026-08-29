@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { initializeAuth, getReactNativePersistence, getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore, getFirestore } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
@@ -29,6 +29,31 @@ try {
   auth = getAuth(app);
 }
 
-const db = getFirestore(app);
+/**
+ * SỬA LỖI "MẠNG TRONG APP CHẬM" (dù mạng máy hoàn toàn bình thường):
+ * getFirestore() mặc định dùng kênh WebChannel streaming — kiểu kết nối
+ * vốn được thiết kế cho trình duyệt web, KHÔNG được React Native/Hermes hỗ
+ * trợ đầy đủ. Mỗi lần Firestore cần mở kết nối (mở app, getDocs,
+ * onSnapshot...), SDK phải thử WebChannel trước, đợi timeout dò lỗi, rồi
+ * mới tự rơi về long-polling — tốn thêm vài giây MỖI LẦN, gây cảm giác
+ * "mạng trong app chậm" trong khi mạng thật của máy không hề chậm.
+ *
+ * initializeFirestore với experimentalAutoDetectLongPolling: true buộc
+ * SDK tự phát hiện môi trường không hỗ trợ streaming và dùng long-polling
+ * NGAY TỪ ĐẦU, bỏ qua bước dò/timeout đó.
+ *
+ * initializeFirestore CHỈ được gọi 1 lần cho mỗi app (giống
+ * initializeAuth) — try/catch rơi về getFirestore cho trường hợp Fast
+ * Refresh lúc dev gọi lại nhiều lần.
+ */
+let db;
+try {
+  db = initializeFirestore(app, {
+    experimentalAutoDetectLongPolling: true,
+    useFetchStreams: false,
+  });
+} catch {
+  db = getFirestore(app);
+}
 
 export { app, auth, db };
