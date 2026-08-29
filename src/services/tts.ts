@@ -1,4 +1,5 @@
 import * as Speech from 'expo-speech';
+import { Platform } from 'react-native';
 import TrackPlayer, { Capability, AppKilledPlaybackBehavior, RepeatMode } from 'react-native-track-player';
 import BackgroundTimer from 'react-native-background-timer';
 import { getGermanExample, getReducedTarget } from '@/utils/grading';
@@ -20,29 +21,6 @@ import type { Question, ExerciseType } from '@/utils/questionBuilder';
  * backend differs.
  */
 let soundEnabledRef = true;
-
-/**
- * LỊCH SỬ (2026-08-29):
- *  1. true  → xác nhận TrackPlayer (session độc quyền) là nguyên nhân
- *     khiến AVSpeechSynthesizer bị im lặng hoàn toàn.
- *  2. false + iosCategoryOptions: ['mixWithOthers'] → hết im lặng, NGHE
- *     NỀN HOẠT ĐỘNG (đã xác nhận trên máy thật), nhưng mỗi từ lại chậm
- *     0.5–2s để "load" (track câm giữ session, speak() phải giành lại
- *     quyền kiểm soát mỗi lần).
- *  3. false + iosCategoryOptions: ['interruptSpokenAudioAndMixWithOthers'],
- *     iosCategoryMode: 'spokenAudio' (bản hiện tại, xem setupTrackPlayerOnce
- *     phía trên) → tuỳ chọn dành riêng cho audio nền liên tục + giọng nói
- *     chen ngang lặp lại, kỳ vọng hết cả im lặng lẫn chậm. CHƯA THỬ TRÊN
- *     THIẾT BỊ THẬT.
- *
- * Sau khi build & cài lại: mở "Nghe từ vựng", kiểm tra cả 2:
- *  - Tiếng Đức có phát được không (không im lặng)?
- *  - Có còn độ trễ trước mỗi từ không (so với lúc dùng mixWithOthers)?
- * Nếu vẫn chậm → báo lại kèm mô tả cụ thể độ trễ có giảm chút nào không,
- * để phân biệt "vẫn đúng hướng nhưng chưa đủ" với "hướng này sai hẳn,
- * cần bỏ TrackPlayer liên tục lặp track câm, đổi cách giữ nền khác".
- */
-const DEBUG_DISABLE_TRACKPLAYER_KEEPALIVE = false;
 
 /**
  * "Trình phát nền" cho Nghe từ vựng, dựng trên react-native-track-player.
@@ -86,50 +64,7 @@ let wakeLockActive = false;
 async function setupTrackPlayerOnce(): Promise<void> {
   if (playerSetupPromise) return playerSetupPromise;
   playerSetupPromise = (async () => {
-    // FIX NGUYÊN NHÂN IM LẶNG (2026-08-29): mặc định TrackPlayer dựng audio
-    // session iOS ở category "playback" KHÔNG có tuỳ chọn mix — tức là
-    // độc quyền session đó. AVSpeechSynthesizer (expo-speech) dùng CHUNG
-    // một AVAudioSession toàn app (không phải session riêng cho từng
-    // module), nên khi track câm của TrackPlayer đang giữ session ở chế
-    // độ độc quyền, lần kích hoạt session tiếp theo của AVSpeechSynthesizer
-    // bị chặn ngay từ tầng hệ điều hành → phát ra không một tiếng động,
-    // dù lệnh speak() vẫn "chạy" bình thường phía JS (không throw lỗi).
-    //
-    // iosCategoryOptions: ['mixWithOthers'] báo cho iOS biết session của
-    // TrackPlayer SẴN SÀNG nhường/chia sẻ chỗ cho nguồn âm thanh khác kích
-    // hoạt cùng lúc (kể cả nguồn khác NGAY TRONG CÙNG APP như
-    // AVSpeechSynthesizer) — thay vì giữ độc quyền suốt lúc track câm
-    // đang lặp. Đây là fix theo báo cáo phổ biến của cộng đồng RNTP khi
-    // TTS bị im lặng lúc dùng chung với TrackPlayer.
-    //
-    // CHƯA KIỂM CHỨNG TRÊN THIẾT BỊ THẬT — cần bạn build lại và thử ngay
-    // "Nghe từ vựng" xem tiếng Đức có phát được không. Nếu VẪN im lặng,
-    // báo lại để thử tiếp iosCategoryOptions: ['interruptSpokenAudioAndMixWithOthers']
-    // (mạnh tay hơn: chủ động nhường hẳn cho audio dạng "giọng nói" thay
-    // vì chỉ hạ âm lượng) — xem comment tại DEBUG_DISABLE_TRACKPLAYER_KEEPALIVE
-    // phía trên nếu cần bật lại cờ debug để so sánh.
-    // CẬP NHẬT (2026-08-29, sau khi thử trên thiết bị thật): nghe nền ĐÃ
-    // hoạt động với 'mixWithOthers', NHƯNG mỗi từ lại chậm 0.5–2s để "load"
-    // — vì 'mixWithOthers' chỉ cho phép 2 nguồn audio cùng tồn tại, không
-    // báo cho hệ thống biết bản chất của AVSpeechSynthesizer là GIỌNG NÓI
-    // cần "chen" mượt vào track câm đang lặp liên tục của TrackPlayer. Kết
-    // quả: mỗi lần speak() vẫn phải giành lại quyền kiểm soát session từ
-    // track câm đang giữ session (mixWithOthers chỉ cho *cùng tồn tại*,
-    // không tối ưu việc *chen ngang liên tục*) → lặp lại đúng kiểu trễ
-    // 0.5–2s ở MỌI từ, chỉ khác trước là không còn bị im lặng hẳn.
-    //
-    // 'interruptSpokenAudioAndMixWithOthers' là tuỳ chọn Apple thiết kế
-    // riêng cho đúng tình huống này: audio nền liên tục (ở đây là track
-    // câm) + audio dạng GIỌNG NÓI cần chen vào lặp đi lặp lại (dùng trong
-    // các app chỉ đường: nhạc nền + giọng đọc hướng dẫn xen kẽ) — hệ
-    // thống xử lý việc chen/nhường này trơn tru hơn hẳn so với
-    // mixWithOthers thông thường, nên kỳ vọng không còn phải "giành lại"
-    // session mỗi lần nói.
-    await TrackPlayer.setupPlayer({
-      iosCategory: 'playback' as any,
-      iosCategoryMode: 'spokenAudio' as any,
-      iosCategoryOptions: ['interruptSpokenAudioAndMixWithOthers'] as any,
-    });
+    await TrackPlayer.setupPlayer({});
     await TrackPlayer.updateOptions({
       android: {
         appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification,
@@ -177,10 +112,6 @@ export async function startKeepAliveAudio(sessionTitle?: string) {
   } catch {
     wakeLockActive = false;
   }
-  if (DEBUG_DISABLE_TRACKPLAYER_KEEPALIVE) {
-    keepAliveActive = true;
-    return;
-  }
   try {
     await setupTrackPlayerOnce();
     const queue = await TrackPlayer.getQueue();
@@ -217,7 +148,6 @@ export async function stopKeepAliveAudio() {
   }
   if (!keepAliveActive) return;
   keepAliveActive = false;
-  if (DEBUG_DISABLE_TRACKPLAYER_KEEPALIVE) return;
   try {
     await TrackPlayer.reset();
   } catch {
@@ -225,59 +155,46 @@ export async function stopKeepAliveAudio() {
   }
 }
 
+/**
+ * "Làm nóng" AVAudioSession của iOS TRƯỚC khi người dùng cần nghe từ đầu
+ * tiên — gọi 1 lần lúc mở app (xem App.tsx).
+ *
+ * TẠI SAO CẦN (2026-08-29): bản trước có cơ chế "mồi câm qua expo-av" để
+ * làm việc này (xem comment ở startKeepAliveAudio phía trên), nhưng khi
+ * đổi hẳn sang react-native-track-player để chống Doze trên Android, bước
+ * mồi câm cho AVAudioSession bị bỏ mất mà không có gì thay thế. Hệ quả:
+ * CHỈ trên iOS, mỗi lần app cần đọc mà AVAudioSession chưa từng được kích
+ * hoạt trong phiên chạy này, hệ điều hành phải tự kích hoạt nó từ đầu —
+ * tốn khoảng 0.5–2 giây — trước khi AVSpeechSynthesizer phát ra được âm
+ * thanh đầu tiên. TextToSpeech của Android không có khái niệm audio
+ * session cần "mở" trước như vậy nên không gặp độ trễ này — khớp với việc
+ * bản Android không bị chậm còn bản iOS thì luôn chậm vài giây trước khi
+ * bắt đầu đọc.
+ *
+ * Cách làm nóng: gọi speak() một lần với âm lượng gần như 0 — bản thân
+ * việc GỌI speak() (bất kể nói gì) là thứ kích hoạt AVAudioSession, không
+ * cần đợi nó đọc xong hay đọc gì có nghĩa. Chỉ cần làm 1 LẦN DUY NHẤT cho
+ * cả vòng đời app (isWarmedUp), gọi thêm lần nữa không có tác dụng gì
+ * thêm mà còn phí 1 lần kích hoạt giọng đọc không cần thiết.
+ *
+ * Chỉ cần trên iOS — gọi trên Android không hại gì nhưng cũng không giải
+ * quyết vấn đề gì (Android vốn không chậm), nên bỏ qua cho gọn.
+ */
+let isWarmedUp = false;
+export function warmUpSpeechAudioSession() {
+  if (isWarmedUp || Platform.OS !== 'ios') return;
+  isWarmedUp = true;
+  try {
+    Speech.speak('.', { language: 'de-DE', volume: 0.01, rate: 1, pitch: 1 });
+  } catch {
+    // Không nghiêm trọng — nếu lỗi, TTS vẫn hoạt động, chỉ chậm hơn ở lần
+    // đọc đầu tiên thật sự (đúng như hành vi trước khi có hàm này).
+  }
+}
+
 /** Call once from SettingsContext when the user toggles the sound setting. */
 export function setTtsSoundEnabled(enabled: boolean) {
   soundEnabledRef = enabled;
-}
-
-/**
- * "Làm nóng" audio session ngay khi app mở, KHÔNG phát tiếng gì và KHÔNG
- * hiện thông báo media — chỉ gọi setupPlayer() một lần để iOS thiết lập
- * sẵn category "playback" cho audio session từ sớm.
- *
- * LÝ DO: expo-speech (AVSpeechSynthesizer) tự kích hoạt/tắt audio session
- * riêng cho MỖI lần gọi speak() nếu chưa có session nào đang "sống" — việc
- * bật/tắt session này tốn khoảng 0.5–2s, gây cảm giác "bấm phát âm phải
- * chờ một lúc mới nghe được", lặp lại ở MỌI lần bấm chứ không chỉ lần
- * đầu. Gọi setupPlayer() sớm (không cần play gì) giúp session đã ở trạng
- * thái sẵn sàng, nên các lệnh speak() sau đó không phải tốn thời gian
- * kích hoạt lại từ đầu.
- */
-export async function warmUpAudioSession() {
-  // ĐÃ XÁC NHẬN (2026-08-29): bật DEBUG_DISABLE_TRACKPLAYER_KEEPALIVE (tắt
-  // TrackPlayer) thì tiếng Đức phát được bình thường trong "Nghe từ vựng"
-  // → TrackPlayer đúng là nguyên nhân gây im lặng hoàn toàn, nên phần dựng
-  // TrackPlayer bên dưới VẪN giữ nguyên tắt (che theo cờ) cho đến khi tìm
-  // ra cách cho 2 audio session (TrackPlayer + AVSpeechSynthesizer) cùng
-  // tồn tại mà không đụng nhau.
-  //
-  // NHƯNG bước "làm nóng" giọng đọc bên dưới (Speech.speak ký tự câm)
-  // KHÔNG liên quan gì đến TrackPlayer — nó chỉ tự kích hoạt audio session
-  // riêng của expo-speech. Trước đây bị return sớm CHUNG với điều kiện
-  // trên nên vô tình bị tắt luôn, khiến mỗi lần bấm phát âm đều phải tốn
-  // 0.5–2s kích hoạt session từ đầu. Tách riêng ra để luôn chạy, không phụ
-  // thuộc cờ debug ở trên.
-  if (!DEBUG_DISABLE_TRACKPLAYER_KEEPALIVE) {
-    try {
-      await setupTrackPlayerOnce();
-    } catch {
-      // Không nghiêm trọng — nếu lỗi, TTS vẫn hoạt động, chỉ có thể chậm hơn
-      // ở lần gọi đầu tiên.
-    }
-  }
-  // "Làm nóng" giọng đọc tiếng Đức: một số giọng tiếng Đức (đặc biệt bản
-  // "Enhanced"/"Premium" người dùng tự tải trong Cài đặt máy) cần nạp mô
-  // hình giọng nói khá nặng vào bộ nhớ TRƯỚC KHI phát được câu đầu tiên —
-  // có thể mất vài giây. Nếu lần nạp đó rơi đúng vào lúc "Nghe từ vựng"
-  // đang chạy, bộ đếm giờ an toàn (watchdog) trong useListenMode có thể
-  // huỷ câu đọc trước khi nó kịp phát ra âm thanh nào. Đọc thử một ký tự
-  // gần như câm (volume cực thấp) ngay khi app mở giúp ép việc nạp giọng
-  // xảy ra sớm, một lần, ngoài lúc người dùng đang thực sự cần nghe.
-  try {
-    Speech.speak('.', { language: 'de-DE', rate: 1, volume: 0.01 });
-  } catch {
-    // ignore — chỉ là tối ưu, không phải điều kiện bắt buộc
-  }
 }
 
 /** index.html: speakText(text) — always German */

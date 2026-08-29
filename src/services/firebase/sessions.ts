@@ -11,17 +11,6 @@ export function invalidateSessionsCache() {
   _sessionsCache = null;
 }
 
-/**
- * Đọc NHANH danh sách phiên đã có sẵn (bộ nhớ hoặc AsyncStorage), KHÔNG
- * đụng mạng — dùng để hiện tạm ngay khi mở app trong lúc chờ tải bản thật
- * từ Firestore (xem DataStore.tsx bootstrap). Khác dbGetAllSessions ở chỗ
- * KHÔNG bao giờ tự đi gọi getDocs — trả về null nếu chưa từng cache.
- */
-export async function peekCachedSessions(uid: string): Promise<Session[] | null> {
-  if (_sessionsCache) return _sessionsCache;
-  return cacheGet<Session[]>('cache_sessions_' + uid);
-}
-
 /** index.html: dbGetAllSessions() */
 export async function dbGetAllSessions(uid: string): Promise<Session[]> {
   if (_sessionsCache) return _sessionsCache;

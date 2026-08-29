@@ -32,31 +32,13 @@ export async function cacheRemove(key: string): Promise<void> {
   }
 }
 
-/**
- * Xoá cache từ vựng/đã-thuộc/đã-gắn-cờ CỦA NHỮNG PHIÊN KHÔNG CÒN TỒN TẠI
- * NỮA (đã bị xoá) — dọn rác AsyncStorage tích tụ theo thời gian, mirrors
- * bootstrap()'s cleanup gốc.
- *
- * SỬA LỖI (2026-08-29): bản trước xoá VÔ ĐIỀU KIỆN mọi key khớp tiền tố,
- * kể cả của những phiên VẪN CÒN TỒN TẠI — nghĩa là mỗi lần mở app, cache
- * của chính phiên đang dùng cũng bị xoá sạch NGAY TRƯỚC KHI
- * activateSession() kịp đọc ra để hiện tạm, khiến app luôn phải đợi mạng
- * lại từ đầu dù đã có cache — làm mất tác dụng của toàn bộ cơ chế
- * cache-first. Giờ cần truyền vào danh sách id phiên THẬT (validSessionIds)
- * để chỉ xoá cache của phiên không còn trong danh sách đó, giữ lại cache
- * của phiên còn tồn tại.
- */
-export async function clearStaleVocabCaches(validSessionIds: string[]): Promise<void> {
+/** Mirrors bootstrap()'s startup cleanup of stale vocab_/cache_mastered_/cache_flagged_ keys */
+export async function clearStaleVocabCaches(): Promise<void> {
   try {
-    const validSet = new Set(validSessionIds);
     const keys = await AsyncStorage.getAllKeys();
-    const stale = keys.filter((k) => {
-      const prefixes = ['vocab_', 'cache_mastered_', 'cache_flagged_'];
-      const prefix = prefixes.find((p) => k.startsWith(p));
-      if (!prefix) return false;
-      const sid = k.slice(prefix.length);
-      return !validSet.has(sid);
-    });
+    const stale = keys.filter(
+      (k) => k.startsWith('vocab_') || k.startsWith('cache_mastered_') || k.startsWith('cache_flagged_')
+    );
     if (stale.length) await AsyncStorage.multiRemove(stale);
   } catch {
     // ignore

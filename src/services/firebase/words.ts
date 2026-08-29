@@ -20,17 +20,6 @@ export async function invalidateVocabCache(sid: string): Promise<void> {
   delete _vocabCache[sid];
 }
 
-/**
- * Đọc NHANH từ vựng đã cache của 1 phiên (bộ nhớ hoặc AsyncStorage), KHÔNG
- * đụng mạng — dùng để hiện tạm ngay khi mở/chuyển phiên trong lúc chờ dữ
- * liệu thật đồng bộ về qua realtime listener (xem activateSession trong
- * DataStore.tsx). Trả về null nếu chưa từng cache (phiên mở lần đầu).
- */
-export async function peekCachedVocab(sid: string): Promise<VocabWord[] | null> {
-  if (_vocabCache[sid]) return _vocabCache[sid];
-  return cacheGet<VocabWord[]>(`vocab_${sid}`);
-}
-
 /** index.html: dbGetSessionVocab(sid) */
 export async function dbGetSessionVocab(uid: string, sid: string): Promise<VocabWord[]> {
   if (_vocabCache[sid]) return _vocabCache[sid];

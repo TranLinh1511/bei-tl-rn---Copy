@@ -1,14 +1,13 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { useAuth } from './AuthContext';
 import { clearStaleVocabCaches, cacheGet, cacheSet } from '@/services/cache';
-import { dbGetAllSessions, dbSaveSession, dbDeleteSession, peekCachedSessions } from '@/services/firebase/sessions';
+import { dbGetAllSessions, dbSaveSession, dbDeleteSession } from '@/services/firebase/sessions';
 import {
   dbGetSessionVocab,
   dbAddWord,
   dbUpdateWord,
   dbDeleteWord,
   getVocabCacheEntry,
-  peekCachedVocab,
 } from '@/services/firebase/words';
 import {
   dbGetMastered,
@@ -17,8 +16,6 @@ import {
   dbUnmarkMastered,
   dbMarkFlagged,
   dbUnmarkFlagged,
-  peekCachedMastered,
-  peekCachedFlagged,
 } from '@/services/firebase/masteredFlagged';
 import {
   getFolders,
@@ -27,7 +24,6 @@ import {
   deleteFolder as fbDeleteFolder,
   moveFolder as fbMoveFolder,
   setSessionFolder as fbSetSessionFolder,
-  peekCachedFolders,
 } from '@/services/firebase/folders';
 import { initRealtimeSync, switchRealtimeSession } from '@/services/firebase/realtimeSync';
 import type { Session, Folder, VocabWord } from '@/types/models';
@@ -161,39 +157,8 @@ export function DataStoreProvider({ children }: { children: React.ReactNode }) {
 
     (async () => {
       setIsLoading(true);
+      await clearStaleVocabCaches();
 
-      // STALE-WHILE-REVALIDATE cho danh sách phiên + thư mục (2026-08-29):
-      // trước đây luôn ĐỢI dbGetAllSessions()/getFolders() trả lời qua
-      // mạng xong mới cho thấy MÀN HÌNH NÀO CẢ (isLoading chỉ tắt ở cuối
-      // cùng) — dù peekCachedSessions/peekCachedFolders đã được viết sẵn
-      // đúng cho việc hiện tạm bằng cache, chỉ là chưa từng được gọi ở
-      // đây. Giờ đọc cache trước: có thì hiện app NGAY (tắt isLoading sớm,
-      // 0 độ trễ mạng cảm nhận được), rồi mới âm thầm tải bản thật ở nền
-      // để đồng bộ (phòng trường hợp phiên/thư mục đã đổi ở thiết bị
-      // khác). Theo dõi phiên đang active bằng biến cục bộ `activeSid`
-      // thay vì đọc lại state `currentSessionId` — vì setState không cập
-      // nhật đồng bộ trong cùng hàm async này.
-      const [cachedSessions, cachedFolders] = await Promise.all([
-        peekCachedSessions(user.uid),
-        peekCachedFolders(user.uid),
-      ]);
-
-      let activeSid: string | null = null;
-      const hasCachedSessions = !!cachedSessions?.length;
-
-      if (hasCachedSessions) {
-        setSessions(cachedSessions!);
-        if (cachedFolders) setFolders(cachedFolders);
-        const savedId = await cacheGet<string>(CURRENT_SESSION_KEY(user.uid));
-        activeSid = cachedSessions!.find((s) => s.id === savedId)?.id ?? cachedSessions![0].id;
-        await activateSession(user.uid, activeSid); // vocab/mastered/flagged của phiên này TỰ nó cũng đã cache-first
-        setIsLoading(false); // hiện app ngay bằng dữ liệu cache, không đợi mạng nữa
-      }
-
-      // Luôn tải bản THẬT ở nền để đồng bộ — nếu đã hiện bằng cache ở trên
-      // thì đây chạy ngầm không chặn UI; nếu chưa có cache (máy mới/lần
-      // đầu đăng nhập) thì đây là lần tải DUY NHẤT, vẫn phải đợi vì chưa
-      // có gì khác để hiện.
       let sess = await dbGetAllSessions(user.uid);
       if (!sess.length) {
         const def: Session = { id: 'sess_' + Date.now(), name: 'Mặc định', createdAt: Date.now() };
@@ -203,25 +168,12 @@ export function DataStoreProvider({ children }: { children: React.ReactNode }) {
       }
       setSessions(sess);
 
-      // Dọn cache của những phiên KHÔNG CÒN trong danh sách thật (đã bị
-      // xoá) — chạy SAU khi có danh sách thật, KHÔNG chặn UI (không await
-      // trước khi tiếp tục các bước hiện dữ liệu), và chỉ xoá đúng phần
-      // rác, không đụng cache của phiên đang hoạt động.
-      clearStaleVocabCaches(sess.map((s) => s.id));
-
       const foldersData = await getFolders(user.uid);
       setFolders(foldersData);
 
-      // Nếu lúc nãy chưa hiện được gì bằng cache (chưa activate phiên nào),
-      // hoặc phiên đang hiện tạm hoá ra không còn tồn tại trong danh sách
-      // THẬT vừa tải về (vd. đã bị xoá ở thiết bị khác) → activate lại
-      // bằng dữ liệu thật.
-      if (!activeSid || !sess.some((s) => s.id === activeSid)) {
-        const savedId = await cacheGet<string>(CURRENT_SESSION_KEY(user.uid));
-        const initialId = sess.find((s) => s.id === savedId)?.id ?? sess[0].id;
-        await activateSession(user.uid, initialId);
-        activeSid = initialId;
-      }
+      const savedId = await cacheGet<string>(CURRENT_SESSION_KEY(user.uid));
+      const initialId = sess.find((s) => s.id === savedId)?.id ?? sess[0].id;
+      await activateSession(user.uid, initialId);
 
       // Nạp lại trạng thái "Gộp phiên" đã lưu từ lần trước (nếu có) — lọc
       // bỏ những id phiên không còn tồn tại nữa (đã bị xoá) để tránh gộp
@@ -295,36 +247,15 @@ export function DataStoreProvider({ children }: { children: React.ReactNode }) {
 
   async function activateSession(uid: string, sid: string) {
     setCurrentSessionId(sid);
-
-    // STALE-WHILE-REVALIDATE: trước đây luôn Promise.all rồi ĐỢI cả 3 lệnh
-    // gọi mạng xong mới hiện gì — mỗi lần mở/chuyển phiên đều phải trả giá
-    // đủ độ trễ mạng, kể cả khi đã từng mở phiên này trước đó (dữ liệu gần
-    // như chắc chắn không đổi). Giờ đọc cache (bộ nhớ hoặc AsyncStorage)
-    // trước — có thì hiện NGAY, 0 độ trễ mạng.
-    const [cachedVocab, cachedMastered, cachedFlagged] = await Promise.all([
-      peekCachedVocab(sid),
-      peekCachedMastered(sid),
-      peekCachedFlagged(sid),
+    const [v, m, f] = await Promise.all([
+      dbGetSessionVocab(uid, sid),
+      dbGetMastered(uid, sid),
+      dbGetFlagged(uid, sid),
     ]);
-    if (cachedVocab) setVocab(cachedVocab);
-    if (cachedMastered) setMasteredIds(cachedMastered);
-    if (cachedFlagged) setFlaggedIds(cachedFlagged);
-
-    // Bật listener thời gian thực NGAY (không đợi bước tải thật bên dưới).
-    // Khi Firestore trả lời thật, onSnapshot sẽ tự gọi onRemoteUpdate để
-    // cập nhật lại state với dữ liệu mới nhất — kể cả trường hợp bước trên
-    // không có gì để hiện tạm, đây cũng là đường sẽ đưa dữ liệu về.
+    setVocab(v);
+    setMasteredIds(m);
+    setFlaggedIds(f);
     switchRealtimeSession(uid, sid, onRemoteUpdate);
-
-    // Phần nào KHÔNG có cache để hiện tạm (phiên mở lần đầu trên máy này)
-    // thì vẫn phải đợi 1 lần tải thật — không có gì để hiện tạm thì đợi
-    // vẫn tốt hơn màn hình trống cho tới khi listener ở trên trả lời.
-    await Promise.all([
-      cachedVocab ? Promise.resolve() : dbGetSessionVocab(uid, sid).then(setVocab),
-      cachedMastered ? Promise.resolve() : dbGetMastered(uid, sid).then(setMasteredIds),
-      cachedFlagged ? Promise.resolve() : dbGetFlagged(uid, sid).then(setFlaggedIds),
-    ]);
-
     await cacheSet(CURRENT_SESSION_KEY(uid), sid);
   }
 
