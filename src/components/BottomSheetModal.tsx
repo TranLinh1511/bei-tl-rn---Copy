@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, View, Pressable, StyleSheet, Platform } from 'react-native';
+import { Modal, View, Pressable, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/theme/ThemeContext';
 import { mobile } from '@/theme/theme';
@@ -11,6 +11,11 @@ import { mobile } from '@/theme/theme';
  *    slide up from bottom (translateY 40px -> 0)
  * Used for EVERY modal per prompt 1.1 (add/edit word, folder manager,
  * global search, import/export, settings...) — not just this one.
+ *
+ * KeyboardAvoidingView bên ngoài: những modal có ô nhập liệu (tìm kiếm,
+ * thêm/sửa từ...) trước đây bị bàn phím che mất vì overlay không tự đẩy
+ * lên khi bàn phím xuất hiện — bọc thêm KeyboardAvoidingView để toàn bộ
+ * bottom-sheet trượt lên trên bàn phím.
  */
 interface BottomSheetModalProps {
   visible: boolean;
@@ -24,22 +29,28 @@ export default function BottomSheetModal({ visible, onClose, children }: BottomS
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={[styles.overlay, { backgroundColor: `rgba(0,0,0,${mobile.overlayOpacity})` }]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <View
-          style={[
-            styles.box,
-            {
-              backgroundColor: colors.modalBg,
-              borderColor: colors.border,
-              paddingBottom: 18 + insets.bottom,
-              maxHeight: `${mobile.modalMaxHeightPercent * 100}%`,
-            },
-          ]}
-        >
-          {children}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
+      >
+        <View style={[styles.overlay, { backgroundColor: `rgba(0,0,0,${mobile.overlayOpacity})` }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+          <View
+            style={[
+              styles.box,
+              {
+                backgroundColor: colors.modalBg,
+                borderColor: colors.border,
+                paddingBottom: 18 + insets.bottom,
+                maxHeight: `${mobile.modalMaxHeightPercent * 100}%`,
+              },
+            ]}
+          >
+            {children}
+          </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

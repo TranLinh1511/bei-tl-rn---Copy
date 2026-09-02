@@ -1,5 +1,5 @@
 import 'react-native-gesture-handler';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Text, TextInput } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
@@ -16,7 +16,7 @@ import { ListenModeProvider } from '@/store/ListenModeContext';
 import ListenModeModal from '@/components/ListenModeModal';
 import FloatingListenPlayer from '@/components/FloatingListenPlayer';
 import RootNavigator from '@/navigation/RootNavigator';
-import { warmUpSpeechAudioSession } from '@/services/tts';
+import { warmUpAudioSession } from '@/services/tts';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -38,15 +38,6 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function AppShell() {
   const { mode } = useTheme();
-  // Làm nóng AVAudioSession của iOS NGAY khi app hiện lên, trước khi
-  // người dùng kịp bấm nghe từ đầu tiên — xem warmUpSpeechAudioSession()
-  // trong tts.ts để biết lý do (Android không cần, tự bỏ qua). Chạy 1 lần
-  // duy nhất cho cả vòng đời app nhờ cờ isWarmedUp bên trong hàm đó, nên
-  // gọi lại ở đây mỗi khi AppShell mount (hiếm khi xảy ra hơn 1 lần) vẫn
-  // an toàn, không đọc lặp lại.
-  React.useEffect(() => {
-    warmUpSpeechAudioSession();
-  }, []);
   return (
     <>
       <StatusBar style={mode === 'dark' ? 'light' : 'dark'} />
@@ -70,6 +61,13 @@ export default function App() {
   const onLayoutRootView = useCallback(async () => {
     if (fontsLoaded || fontError) await SplashScreen.hideAsync();
   }, [fontsLoaded, fontError]);
+
+  // Làm nóng audio session ngay khi app mở, để lần bấm phát âm đầu tiên
+  // (và mọi lần sau) không phải chờ iOS kích hoạt session từ đầu — xem
+  // chú thích chi tiết trong warmUpAudioSession() (services/tts.ts).
+  useEffect(() => {
+    warmUpAudioSession();
+  }, []);
 
   if (!fontsLoaded && !fontError) return null;
 
